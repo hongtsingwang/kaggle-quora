@@ -40,8 +40,7 @@ test_file = os.path.join(data_dir, "test.csv")
 train_df = pd.read_csv(train_file, header=0)
 test_df = pd.read_csv(train_file, header=0)
 
-porter = PorterStemmer()
-snowball = SnowballStemmer('english')
+porter = SnowballStemmer('english')
 
 
 def stem_str(x, stemmer=SnowballStemmer('english')):
@@ -61,12 +60,11 @@ def generate_stem():
     test_result_path = os.path.join(data_dir, "transform_data", "test_porter.csv")
     train_df.to_csv(train_result_path)
     test_df.to_csv(test_result_path)
-    test_df.to_csv(test_result_path)
 
 
 def test_function():
     logging.info("start testing generate_stem")
-
+    generate_stem()
 
 if __name__ == "__main__":
     test_function()
