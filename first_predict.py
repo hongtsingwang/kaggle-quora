@@ -66,7 +66,7 @@ def get_weight(count, eps=10000, min_count=2):
     if count < min_count:
         return 0
     else:
-        return 1 / (count + eps)
+        return 1.0 / (count + eps)
 
 
 def tfidf_word_match_share(row):
@@ -80,16 +80,19 @@ def tfidf_word_match_share(row):
     for word in str(row['question1']).lower().split():
         if word not in stops:
             q1_set.add(word)
+    
     for word in str(row['question2']).lower().split():
         if word not in stops:
             q2_set.add(word)
-    if len(q1_set) == 0 or len(q2_set) == 0:
+
+    if len(q1_set) == 0 and len(q2_set) == 0:
         # 两句话都是只有停用词
         return 0
 
     shared_weights = [weights.get(w, 0) for w in q1_set & q2_set]
     total_weights = [weights.get(w, 0) for w in q1_set] + [weights.get(w, 0) for w in q1_set]
-    ratio = sum(shared_weights) * 1.0 / sum(total_weights)
+    
+    ratio = np.sum(shared_weights) / np.sum(total_weights)
     return ratio
 
 
