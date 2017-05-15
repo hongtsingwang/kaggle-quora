@@ -10,49 +10,27 @@
 import logging
 import os
 import sys
-
 import numpy as np
 import pandas as pd
+import xgboost as xgb
+
+from sklearn.cross_validation import train_test_split
+from collections import Counter
+from nltk.corpus import stopwords
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
 
-# parser = argparse.ArgumentParser()
-# parser.add_argument()
-# args = parser.parse_args()
-
-# output = args.output
 logging.basicConfig(
     format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s',
     level=logging.DEBUG,
     datefmt='%a, %d %b %Y %H:%M:%S'
 )
 
-home_dir = os.getcwd()
-data_dir = os.path.join(home_dir, "data")
-
-train_file = os.path.join(data_dir, "train.csv")
-test_file = os.path.join(data_dir, "test.csv")
-
-df_train = pd.read_csv(train_file)
-df_test = pd.read_csv(test_file)
-
-train_qs = pd.Series(df_train['question1'].tolist() + df_train['question2'].tolist()).astype(str)
-test_qs = pd.Series(df_test['question1'].tolist() + df_test['question2'].tolist()).astype(str)
-
-dist_train = train_qs.apply(lambda x: len(x.split(' ')))
-dist_test = test_qs.apply(lambda x: len(x.split(' ')))
-
-from nltk.corpus import stopwords
-
-stops = set(stopwords.words("english"))
-
-print stops
-
 
 def word_match_share(row):
     """
-    计算相同的词的个数
+    计算相同的词的个数, 占两句话总次数的比例
     :param row: 
     :return: 
     """
@@ -66,60 +44,110 @@ def word_match_share(row):
         if word not in stops:
             q2words[word] = 1
     if len(q1words) == 0 or len(q2words) == 0:
-        # The computer-generated chaff includes a few questions that are nothing but stopwords
+        # 如果两句话恰好全是停止词
         return 0
     shared_words_in_q1 = [w for w in q1words.keys() if w in q2words]
     shared_words_in_q2 = [w for w in q2words.keys() if w in q1words]
-    R = (len(shared_words_in_q1) + len(shared_words_in_q2)) / (len(q1words) + len(q2words))
-    return R
+    ratio = (len(shared_words_in_q1) + len(shared_words_in_q2)) / (len(q1words) + len(q2words))
+    return ratio
 
 
-def word_match_share(row):
-    q1words = {}
-    q2words = {}
-    for word in str(row["question1"]).lower().split():
-        if word not in stops:
-            q1words[word] = 1
-    for word in str(row["question2"]).lower().split():
-        if word not in stops:
-            q2words[word] = 1
-    if len(q1words) == 0 or len(q2words) == 0:
-        # The computer-generated chaff includes a few questions that are nothing but stopwords
+def get_weight(count, eps=10000, min_count=2):
+    """
+    计算每个词在所给的quora语料库之中的权重
+    如果一个词在语料库之中只出现一次， 那么久忽略这个词
+    
+    :param count: 
+    :param eps: 
+    :param min_count: 
+    :return: 
+    """
+    # TODO 定义一个平滑常量， 让极端少数出现的词造成的影响尽可能的小
+    if count < min_count:
         return 0
-    shared_words_in_q1 = [w for w in q1words.keys() if w in q2words]
-    shared_words_in_q2 = [w for w in q2words.keys() if w in q1words]
-    return (0.5 * len(shared_words_in_q1) / len(q1words) + 0.5 * len(shared_words_in_q2) / len(q2words))
+    else:
+        return 1 / (count + eps)
 
 
+def tfidf_word_match_share(row):
+    """
+    计算每个词的tf_idf结果
+    :param row: 
+    :return: 
+    """
+    q1_set = set()
+    q2_set = set()
+    for word in str(row['question1']).lower().split():
+        if word not in stops:
+            q1_set.add(word)
+    for word in str(row['question2']).lower().split():
+        if word not in stops:
+            q2_set.add(word)
+    if len(q1_set) == 0 or len(q2_set) == 0:
+        # 两句话都是只有停用词
+        return 0
+
+    shared_weights = [weights.get(w, 0) for w in q1_set & q2_set]
+    total_weights = [weights.get(w, 0) for w in q1_set] + [weights.get(w, 0) for w in q1_set]
+    ratio = sum(shared_weights) * 1.0 / sum(total_weights)
+    return ratio
+
+
+home_dir = os.getcwd()
+data_dir = os.path.join(home_dir, "data")
+result_dir = os.path.join(home_dir, "result")
+
+train_file = os.path.join(data_dir, "train.csv")
+test_file = os.path.join(data_dir, "test.csv")
+result_file = os.path.join(result_dir, "navie_submission.csv")
+
+train = pd.read_csv(train_file)
 test = pd.read_csv(test_file)
+
+train_qs = pd.Series(train['question1'].tolist() + train['question2'].tolist()).astype(str)
+test_qs = pd.Series(test['question1'].tolist() + test['question2'].tolist()).astype(str)
+
+# 英语之中的无用的停止词
 stops = set(stopwords.words("english"))
+eps = 5000
+words = (" ".join(train_qs)).lower().split()
+counts = Counter(words)
+weights = {word: get_weight(count) for word, count in counts.items()}
 
-sub = pd.DataFrame()
-sub['test_id'] = test['test_id']
-sub["is_duplicate"] = test.apply(word_match_share, axis=1, raw=True)
-sub.to_csv("count_words_benchmark.csv", index=False)
+train_word_match = train.apply(word_match_share, axis=1, raw=True)
+tfidf_train_word_match = train.apply(tfidf_word_match_share, axis=1, raw=True)
 
-# # 数据统计和分析部分
-# df_train_number = len(df_train)
-# logging.info("item numbers of train file is %d" % df_train_number)
-# df_train_duplicate_num = len(df_train[df_train["is_duplicate"] == 1])
-# df_train_duplicate_ratio = float(df_train_duplicate_num * 1.0 / df_train_number)
-# logging.info('Duplicate pairs number: %d, the ratio is %.3f%%' % (df_train_duplicate_num, df_train_duplicate_ratio*100))
-#
-# qids = pd.Series(df_train['qid1'].tolist() + df_train['qid2'].tolist())
-# logging.info('Total number of questions in the training data: %d  ' % (len(np.unique(qids))))
+# First we create our training and testing data
+x_train = pd.DataFrame()
+x_test = pd.DataFrame()
+x_train['word_match'] = train_word_match
+x_train['tfidf_word_match'] = tfidf_train_word_match
+x_test['word_match'] = test.apply(word_match_share, axis=1, raw=True)
+x_test['tfidf_word_match'] = test.apply(tfidf_word_match_share, axis=1, raw=True)
 
+y_train = train['is_duplicate'].values
 
-from sklearn.metrics import log_loss
+pos_train = x_train[y_train == 1]
+neg_train = x_train[y_train == 0]
 
-p = df_train['is_duplicate'].mean()  # Our predicted probability
-# print('Predicted score:', log_loss(df_train['is_duplicate'], np.zeros_like(df_train['is_duplicate']) + p))
-# print('Total number of question pairs for testing: {}'.format(len(df_test)))
+# 正采样过多，负采样过少， 这样的话， 需要对负样本进行过采样
+# TODO 一定要知道p值是如何确定的。
+p = 0.165
+scale = ((len(pos_train) / (len(pos_train) + len(neg_train))) / p) - 1
+while scale > 1:
+    neg_train = pd.concat([neg_train, neg_train])
+    scale -= 1
+neg_train = pd.concat([neg_train, neg_train[:int(scale * len(neg_train))]])
 
-import xgboost as xgb
+x_train = pd.concat([pos_train, neg_train])
+y_train = (np.zeros(len(pos_train)) + 1).tolist() + np.zeros(len(neg_train)).tolist()
+del pos_train
+del neg_train
 
-# Set our parameters for xgboost
-params = {}
+x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.2, random_state=4242)
+
+# 设置xgboost参数
+params = dict()
 params['objective'] = 'binary:logistic'
 params['eval_metric'] = 'logloss'
 params['eta'] = 0.02
@@ -132,10 +160,5 @@ watchlist = [(d_train, 'train'), (d_valid, 'valid')]
 
 bst = xgb.train(params, d_train, 400, watchlist, early_stopping_rounds=50, verbose_eval=10)
 
-sub = pd.DataFrame({'test_id': df_test['test_id'], 'is_duplicate': p})
-sub.to_csv('naive_submission.csv', index=False)
-# import zipfile
-
-# result = zipfile.ZipFile("naive_submission.zip", mode="w", compression=zipfile.ZIP_STORED)
-# result.write('naive_submission.csv')
-# result.close()
+sub = pd.DataFrame({'test_id': test['test_id'], 'is_duplicate': p})
+sub.to_csv(result_file, index=False)
