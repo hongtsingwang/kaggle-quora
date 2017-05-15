@@ -27,6 +27,10 @@ logging.basicConfig(
     datefmt='%a, %d %b %Y %H:%M:%S'
 )
 
+logging.info("the program start!")
+
+random_seed = 12357
+xgboost_iterations = 315
 
 def word_match_share(row):
     """
